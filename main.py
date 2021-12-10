@@ -11,7 +11,6 @@ from torch.optim import SGD, Adam, AdamW
 from torch.optim.swa_utils import update_bn
 from torch.optim.lr_scheduler import OneCycleLR
 from pytorch_lightning import LightningModule
-from pytorch_lightning.utilities import rank_zero_only
 from pytorch_lightning.utilities.cli import instantiate_class, LightningCLI
 from torchmetrics import MetricCollection, Accuracy
 
@@ -157,7 +156,7 @@ class MyLightningCLI(LightningCLI):
 
         # 2. add optimizer & scheduler argument
         parser.add_optimizer_args((SGD, Adam, AdamW), link_to='model.optimizer_init')
-        parser.add_lr_scheduler_args((CosineLR, OneCycleLR), link_to='model.lr_scheduler_init')
+        parser.add_lr_scheduler_args((OneCycleLR,), link_to='model.lr_scheduler_init')
 
 
 if __name__ == '__main__':

@@ -11,19 +11,14 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from torchvision.datasets import CIFAR10, CIFAR100, ImageNet
+from torchvision.datasets import CIFAR10, CIFAR100
 
 import numpy as np
 from rich.table import Table
 from rich.console import Console
 from timm.data import create_transform
 
-
-class MyImageNet2012(ImageNet):
-    def __init__(self, *args, download=False, train=True, **kwargs):
-        kwargs['root'] = '/home/hankyul/hdd_ext/imageNet'
-        kwargs['split'] = 'train' if train else 'val'
-        super(MyImageNet2012, self).__init__(*args, **kwargs)
+from data import MSCOCO2014
 
 
 class BaseDataModule(LightningDataModule):
@@ -51,8 +46,8 @@ class BaseDataModule(LightningDataModule):
             dataset, self.mean, self.std = CIFAR10, (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
         elif dataset_name == 'cifar100':
             dataset, self.mean, self.std = CIFAR100, (0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)
-        elif dataset_name == 'imagenet':
-            dataset, self.mean, self.std = MyImageNet2012, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+        elif dataset_name == 'coco':
+            dataset, self.mean, self.std = MSCOCO2014, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
 
         self.size = self.eval_size = size
         self.train_transform, self.test_transform = self.get_transforms(augmentation)
@@ -95,7 +90,6 @@ class BaseDataModule(LightningDataModule):
         self.train_data_len = len(train)
         self.test_data_len = len(test)
         self.num_step = int(math.ceil(len(train) / self.batch_size))
-        self.num_classes = len(train.classes)
 
     def setup(self, stage: str = None):
         self.train_ds = self.dataset(root=self.data_root, train=True, transform=self.train_transform)
