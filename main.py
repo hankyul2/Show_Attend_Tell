@@ -14,7 +14,8 @@ from pytorch_lightning import LightningModule
 from pytorch_lightning.utilities.cli import instantiate_class, LightningCLI
 from torchmetrics import MetricCollection, Accuracy
 
-from utils import BaseDataModule, LabelSmoothing, cutmix, cutout, mixup, EMA
+from utils import LabelSmoothing, cutmix, cutout, mixup, EMA
+from data import BaseDataModule
 
 
 class BaseVisionSystem(LightningModule):
