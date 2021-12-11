@@ -1,27 +1,29 @@
+import json
 import os
 import math
-import random
 import warnings
+
+import torch
+from torch.nn.utils.rnn import pack_padded_sequence
 
 warnings.filterwarnings('ignore')
 os.environ['CUDA_DEVICE_ORDER'] = 'PCI_BUS_ID'
 
-import torch
 from torch.optim import SGD, Adam, AdamW
-from torch.optim.swa_utils import update_bn
 from torch.optim.lr_scheduler import OneCycleLR
 from pytorch_lightning import LightningModule
 from pytorch_lightning.utilities.cli import instantiate_class, LightningCLI
-from torchmetrics import MetricCollection, Accuracy
+from torchmetrics import MetricCollection, Accuracy, BLEUScore
 
-from utils import LabelSmoothing, cutmix, cutout, mixup, EMA
+from utils import LabelSmoothing, EMA
 from data import BaseDataModule
+from model import get_model
 
 
-class BaseVisionSystem(LightningModule):
-    def __init__(self, model_name: str, pretrained: bool, num_classes: int, num_step: int, max_epochs: int,
-                 gpus: str, optimizer_init: dict, lr_scheduler_init: dict, use_precise_bn: bool = False,
-                 augmentation: str = 'default', ema: float = 0.0, dropout: float = 0.0):
+class BaseImageCaptionSystem(LightningModule):
+    def __init__(self, model_name: str, pretrained: bool, num_step: int, max_epochs: int,
+                 gpus: str, optimizer_init: dict, lr_scheduler_init: dict,
+                 processed_root: str, dropout: float = 0.0):
         """ Define base vision classification system
         :arg
             model_name: model name string ex) efficientnet_v2_s
@@ -37,20 +39,17 @@ class BaseVisionSystem(LightningModule):
             ema: use exponential moving average to increase model performance
             dropout: dropout rate for model
         """
-        super(BaseVisionSystem, self).__init__()
+        super(BaseImageCaptionSystem, self).__init__()
         self.save_hyperparameters()
 
         # step 1. save data related info (not defined here)
-        self.augmentation = augmentation
         self.gpus = len(gpus.split(',')) - 1
         self.num_step = int(math.ceil(num_step / (self.gpus)))
         self.max_epochs = max_epochs
 
         # step 2. define model
-        self.model = torch.hub.load('hankyul2/EfficientNetV2-pytorch', model_name, nclass=num_classes, skip_validation=True,
-                                    pretrained=pretrained, dropout=dropout)
-        self.ema_model = EMA(self.model, decay=ema) if ema != 0.0 else None
-        self.use_precise_bn = use_precise_bn
+        self.word_map = self.open_word_map(processed_root)
+        self.model = get_model(model_name, pretrained, len(self.word_map), dropout)
 
         # step 3. define lr tools (optimizer, lr scheduler)
         self.optimizer_init_config = optimizer_init
@@ -62,6 +61,7 @@ class BaseVisionSystem(LightningModule):
         self.train_metric = metrics.clone(prefix='train/')
         self.valid_metric = metrics.clone(prefix='valid/')
         self.test_metric = metrics.clone(prefix='test/')
+        self.bleu_metric = BLEUScore()
 
     def forward(self, batch, batch_idx):
         x, y = batch
@@ -69,46 +69,39 @@ class BaseVisionSystem(LightningModule):
         return loss
 
     def training_step(self, batch, batch_idx, optimizer_idx=None):
-        return self.shared_step(batch, self.train_metric, 'train', add_dataloader_idx=False)
+        return self.shared_step(batch, self.train_metric, 'train')
 
     def validation_step(self, batch, batch_idx, dataloader_idx=None):
-        return self.shared_step(batch, self.valid_metric, 'valid', add_dataloader_idx=True)
+        return self.shared_step(batch[:-1], self.valid_metric, 'valid', batch[-1], self.bleu_metric)
 
     def test_step(self, batch, batch_idx, dataloader_idx=None):
-        return self.shared_step(batch, self.test_metric, 'test', add_dataloader_idx=True)
+        return self.shared_step(batch[:-1], self.test_metric, 'test', batch[-1], self.bleu_metric)
 
-    def shared_step(self, batch, metric, mode, add_dataloader_idx):
-        x, y = batch
-        loss, y_hat = self.compute_loss(x, y) if mode == 'train' else self.compute_loss_eval(x, y)
+    def shared_step(self, batch, metric, mode, references=None, bleu_metric=None):
+        preds, caps_sorted, decode_lengths, alphas, sort_ind = self.model(*batch)
+        y_hat = pack_padded_sequence(preds, decode_lengths, batch_first=True).data
+        y = pack_padded_sequence(caps_sorted[:, 1:], decode_lengths, batch_first=True).data
+        loss = self.criterion(y_hat, y) + ((1. - alphas.sum(dim=1)) ** 2).mean()
         metric = metric(y_hat, y)
-        self.log_dict({f'{mode}/loss': loss}, add_dataloader_idx=add_dataloader_idx, prog_bar=True)
-        self.log_dict(metric, add_dataloader_idx=add_dataloader_idx, prog_bar=True)
+        self.log_dict({f'{mode}/loss': loss}, prog_bar=True)
+        self.log_dict(metric, prog_bar=True)
+
+        if bleu_metric:
+            references = self.get_reference_list(references, sort_ind)
+            hypothesis = [' '.join(str(i) for i in pred[:decode_lengths[j]]) for j, pred in enumerate(torch.max(preds, dim=2)[1].tolist())]
+            self.log_dict({f'{mode}/BLEU': bleu_metric(references, hypothesis)}, prog_bar=True)
+
         return loss
 
-    def compute_loss(self, x, y):
-        if random.random() < 1.0 and self.augmentation != 'default':
-            if self.augmentation == 'mixup':
-                x, y1, y2, ratio = mixup(x, y)
-                y_hat = self.model(x)
-                loss = self.criterion(y_hat, y1) * ratio + self.criterion(y_hat, y2) * (1 - ratio)
-                return loss, y_hat
-
-            elif self.augmentation == 'cutout':
-                x, y, ratio = cutout(x, y)
-                return self.compute_loss_eval(x, y)
-
-            elif self.augmentation == 'cutmix':
-                x, y1, y2, ratio = cutmix(x, y)
-                y_hat = self.model(x)
-                loss = self.criterion(y_hat, y1) * ratio + self.criterion(y_hat, y2) * (1 - ratio)
-                return loss, y_hat
-        else:
-            return self.compute_loss_eval(x, y)
-
-    def compute_loss_eval(self, x, y):
-        y_hat = self.model(x) if self.model.training or self.ema_model is None else self.ema_model.module(x)
-        loss = self.criterion(y_hat, y)
-        return loss, y_hat
+    def get_reference_list(self, references, sort_ind):
+        reference_list = []
+        references = references[sort_ind]
+        for idx in range(references.size(0)):
+            reference = references[idx].tolist()
+            reference = list(
+                map(lambda c: ' '.join([str(w) for w in c if w not in {self.word_map['<start>'], self.word_map['<pad>']}]), reference))
+            reference_list.append(reference)
+        return reference_list
 
     def configure_optimizers(self):
         optimizer = instantiate_class(self.model.parameters(), self.optimizer_init_config)
@@ -128,29 +121,20 @@ class BaseVisionSystem(LightningModule):
             self.lr_scheduler_init_config['init_args']['total_steps'] = self.num_step * self.max_epochs
         return self.lr_scheduler_init_config
 
-    @torch.no_grad()
-    def on_train_end(self) -> None:
-        """"Precise BatchNorm"""
-        if self.use_precise_bn:
-            if self.ema_model:
-                update_bn(self.trainer.datamodule.train_dataloader(), self.ema_model, self.device)
-            else:
-                update_bn(self.trainer.datamodule.train_dataloader(), self.model, self.device)
-
-    def on_after_backward(self) -> None:
-        """EMA model update"""
-        if self.ema_model:
-            self.ema_model.update(self.model)
-
     def optimizer_zero_grad(self, epoch, batch_idx, optimizer, optimizer_idx):
         """Faster optimization step"""
         optimizer.zero_grad(set_to_none=True)
+
+    def open_word_map(self, processed_root):
+        with open(os.path.join(processed_root, 'WORDMAP.json'), 'r') as f:
+            word_map = json.load(f)
+        return word_map
 
 
 class MyLightningCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
         # 1. link argument
-        parser.link_arguments('data.num_classes', 'model.num_classes', apply_on='instantiate')
+        parser.link_arguments('data.processed_root', 'model.processed_root', apply_on='instantiate')
         parser.link_arguments('data.num_step', 'model.num_step', apply_on='instantiate')
         parser.link_arguments('trainer.max_epochs', 'model.max_epochs', apply_on='parse')
         parser.link_arguments('trainer.gpus', 'model.gpus', apply_on='parse')
@@ -161,5 +145,5 @@ class MyLightningCLI(LightningCLI):
 
 
 if __name__ == '__main__':
-    cli = MyLightningCLI(BaseVisionSystem, BaseDataModule, save_config_overwrite=True)
+    cli = MyLightningCLI(BaseImageCaptionSystem, BaseDataModule, save_config_overwrite=True)
     cli.trainer.test(ckpt_path='best', dataloaders=cli.datamodule.test_dataloader())

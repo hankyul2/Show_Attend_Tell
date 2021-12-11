@@ -1,0 +1,13 @@
+session_name: show_attend_tell
+windows:
+  - window_name: coco
+    shell_command_before:
+      - source ~/.bashrc
+    panes:
+      - shell_command:
+        - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 2 --seed_everything 2021
+        - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 4 --seed_everything 2021
+        - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 6 --seed_everything 2021
+        - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 8 --seed_everything 2021
+        - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 10 --seed_everything 2021
+        - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 20 --seed_everything 2021

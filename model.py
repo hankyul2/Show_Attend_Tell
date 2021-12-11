@@ -25,8 +25,8 @@ class Attention(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, en, de):
-        en, de = self.en(en), self.de(de)
-        alpha = F.softmax(self.at(self.relu(en + de.unsqueeze(dim=1))).squeeze(-1), dim=1)
+        en_attn, de_attn = self.en(en), self.de(de)
+        alpha = F.softmax(self.at(self.relu(en_attn + de_attn.unsqueeze(dim=1))).squeeze(-1), dim=1)
         alpha_weighted_en = (alpha.unsqueeze(-1) * en).sum(dim=1)
         return alpha_weighted_en, alpha
 
@@ -72,3 +72,23 @@ class Decoder(nn.Module):
     def init_h_c(self, img):
         img_mean = img.mean(dim=1)
         return self.init_h(img_mean), self.init_c(img_mean)
+
+
+class EncoderDecoder(nn.Module):
+    def __init__(self, model_name, pretrained=False, vocab_size=100, dropout=0.1,
+                 output_size=(14, 14), embed_dim=512, decoder_dim=512, attn_dim=512):
+        super(EncoderDecoder, self).__init__()
+        self.encoder = Encoder(model_name, pretrained, output_size)
+        self.decoder = Decoder(256, embed_dim, decoder_dim, attn_dim, vocab_size, dropout)
+
+    def forward_impl(self, img, text, text_len):
+        img = self.encoder(img)
+        return self.decoder(img, text, text_len)
+
+    def forward(self, img, text, text_len):
+        return self.forward_impl(img, text, text_len)
+
+
+def get_model(*args, **kwargs):
+    return EncoderDecoder(*args, **kwargs)
+
