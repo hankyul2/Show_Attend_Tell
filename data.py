@@ -12,22 +12,18 @@ import h5py
 import numpy as np
 from PIL import Image
 from rich.progress import track
-from timm.data import create_transform
 
 import torch
 from torch.utils.data import Dataset, DataLoader
 from pytorch_lightning import LightningDataModule
 from pytorch_lightning.utilities.types import TRAIN_DATALOADERS, EVAL_DATALOADERS
 from torchvision import transforms
-from torchvision.datasets import ImageFolder, CIFAR10, CIFAR100
 
 
-def create_input_files(downloaded_folder, output_folder, captions_per_image=3, min_word_freq=2,
-                       max_len=100):
-
+def create_input_files(downloaded_folder, output_folder, captions_per_image=3, min_word_freq=2, max_len=100):
     if Path(output_folder).exists():
-        print('already processed')
-        return
+        print('input files are already processed')
+        return output_folder
     else:
         Path(output_folder).mkdir()
 
@@ -78,11 +74,8 @@ def create_input_files(downloaded_folder, output_folder, captions_per_image=3, m
     word_map['<end>'] = len(word_map) + 1
     word_map['<pad>'] = 0
 
-    # Create a base/root name for all output files
-    base_filename = 'coco_' + str(captions_per_image) + '_cap_per_img_' + str(min_word_freq) + '_min_word_freq'
-
     # Save word map to a JSON
-    with open(os.path.join(output_folder, 'WORDMAP_' + base_filename + '.json'), 'w') as j:
+    with open(os.path.join(output_folder, 'WORDMAP.json'), 'w') as j:
         json.dump(word_map, j)
 
     # Sample captions for each image, save images to HDF5 file, and captions and their lengths to JSON files
@@ -90,11 +83,13 @@ def create_input_files(downloaded_folder, output_folder, captions_per_image=3, m
     for impaths, imcaps, split in [(train_image_paths, train_image_captions, 'TRAIN'),
                                    (val_image_paths, val_image_captions, 'VAL'),
                                    (test_image_paths, test_image_captions, 'TEST')]:
-        save_caption_with_img(base_filename, captions_per_image, imcaps, impaths, max_len, output_folder, split, word_map)
+        save_caption_with_img(captions_per_image, imcaps, impaths, max_len, output_folder, split, word_map)
+
+    return output_folder
 
 
-def save_caption_with_img(base_filename, captions_per_image, imcaps, impaths, max_len, output_folder, split, word_map):
-    with h5py.File(os.path.join(output_folder, split + '_IMAGES_' + base_filename + '.hdf5'), 'a') as h:
+def save_caption_with_img(captions_per_image, imcaps, impaths, max_len, output_folder, split, word_map):
+    with h5py.File(os.path.join(output_folder, split + '_IMAGES.hdf5'), 'a') as h:
         # Make a note of the number of captions we are sampling per image
         h.attrs['captions_per_image'] = captions_per_image
 
@@ -140,10 +135,10 @@ def save_caption_with_img(base_filename, captions_per_image, imcaps, impaths, ma
         assert images.shape[0] * captions_per_image == len(enc_captions) == len(caplens)
 
         # Save encoded captions and their lengths to JSON files
-        with open(os.path.join(output_folder, split + '_CAPTIONS_' + base_filename + '.json'), 'w') as j:
+        with open(os.path.join(output_folder, split + '_CAPTIONS.json'), 'w') as j:
             json.dump(enc_captions, j)
 
-        with open(os.path.join(output_folder, split + '_CAPLENS_' + base_filename + '.json'), 'w') as j:
+        with open(os.path.join(output_folder, split + '_CAPLENS.json'), 'w') as j:
             json.dump(caplens, j)
 
 
@@ -173,22 +168,25 @@ def download_ms_coco_2014(data_root):
 
 
 class MSCOCO2014(Dataset):
-    def __init__(self, root, download, train, transform=None):
-        root = '/home/hankyul/hdd_ext2/coco'
-        proceesed_root = os.path.join(root, 'processed')
+    def __init__(self, root, train=True, download=False, transform=None, process=False, captions_per_image=3, min_word_freq=2):
+        self.processed_root = os.path.join(root, f'{captions_per_image}_cap_per_img_{min_word_freq}_min_word_freq')
+
         if download == True:
             download_ms_coco_2014(root)
-            create_input_files(root, proceesed_root)
-        split = 'train' if train else 'val'
+        if process == True:
+            create_input_files(root, self.processed_root)
 
-        self.h = h5py.File(os.path.join(proceesed_root, split + '_IMAGES_coco.hdf5'), 'r')
+        self.train = train
+        self.split = 'TRAIN' if train else 'VAL'
+
+        self.h = h5py.File(os.path.join(self.processed_root, self.split + '_IMAGES.hdf5'), 'r')
         self.imgs = self.h['images']
         self.cpi = self.h.attrs['captions_per_image']
 
-        with open(os.path.join(proceesed_root, self.split + '_CAPTIONS_coco.json'), 'r') as j:
+        with open(os.path.join(self.processed_root, self.split + '_CAPTIONS.json'), 'r') as j:
             self.captions = json.load(j)
 
-        with open(os.path.join(proceesed_root, self.split + '_CAPLENS_coco.json'), 'r') as j:
+        with open(os.path.join(self.processed_root, self.split + '_CAPLENS.json'), 'r') as j:
             self.caplens = json.load(j)
 
         self.transform = transform
@@ -198,18 +196,19 @@ class MSCOCO2014(Dataset):
         return self.dataset_size
 
     def __getitem__(self, i):
-        img = torch.FloatTensor(self.imgs[i // self.cpi] / 255.)
+        img_idx = i // self.cpi
+        img = torch.FloatTensor(self.imgs[img_idx] / 255.)
         caption, caplen = torch.LongTensor(self.captions[i]), torch.LongTensor([self.caplens[i]])
 
         if self.transform is not None:
             img = self.transform(img)
 
-        if self.split is 'TRAIN':
+        if self.train:
             return img, caption, caplen
         else:
             # For validation of testing, also return all 'captions_per_image' captions to find BLEU-4 score
-            all_captions = torch.LongTensor(
-                self.captions[((i // self.cpi) * self.cpi):(((i // self.cpi) * self.cpi) + self.cpi)])
+            base_caption_idx = img_idx * self.cpi
+            all_captions = torch.LongTensor(self.captions[base_caption_idx:(base_caption_idx + self.cpi)])
             return img, caption, caplen, all_captions
 
 
@@ -217,10 +216,9 @@ class BaseDataModule(LightningDataModule):
     def __init__(self,
                  dataset_name: str,
                  size: tuple,
-                 augmentation: str = 'normal',
                  batch_size: int = 64,
                  num_workers: int = 4,
-                 data_root: str = 'data',
+                 data_root: str = '/home/hankyul/hdd_ext2/coco',
                  valid_ratio: float = 0.1):
         """
         Base Data Module
@@ -234,43 +232,31 @@ class BaseDataModule(LightningDataModule):
         """
         super(BaseDataModule, self).__init__()
 
-        if dataset_name == 'cifar10':
-            dataset, self.mean, self.std = CIFAR10, (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
-        elif dataset_name == 'cifar100':
-            dataset, self.mean, self.std = CIFAR100, (0.5071, 0.4865, 0.4409), (0.2673, 0.2564, 0.2762)
-        elif dataset_name == 'coco':
+        if dataset_name == 'coco':
             dataset, self.mean, self.std = MSCOCO2014, (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
 
         self.size = self.eval_size = size
-        self.train_transform, self.test_transform = self.get_transforms(augmentation)
+        self.train_transform, self.test_transform = self.get_transforms()
         self.dataset_name = dataset_name
         self.dataset = dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.data_root = data_root
         self.valid_ratio = valid_ratio
+        self.data_processed_name = None
         self.num_classes = None
         self.num_step = None
         self.train_data_len = None
         self.test_data_len = None
         self.prepare_data()
 
-    def get_transforms(self, augmentation):
-        if augmentation == 'normal':
-            train = transforms.Compose([
-                transforms.Resize(self.size),
-                transforms.Pad(4, padding_mode='reflect'),
-                transforms.RandomCrop(self.size),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=self.mean, std=self.std)
-            ])
-        elif augmentation.startswith('rand'):
-            train = create_transform(self.size, is_training=True, auto_augment=augmentation, mean=self.mean, std=self.std)
+    def get_transforms(self):
+        train = transforms.Compose([
+            transforms.Resize(self.size),
+            transforms.Normalize(mean=self.mean, std=self.std),
+        ])
         test = transforms.Compose([
-            transforms.Resize(self.eval_size),
-            transforms.CenterCrop(self.eval_size),
-            transforms.ToTensor(),
+            transforms.Resize(self.size),
             transforms.Normalize(mean=self.mean, std=self.std)
         ])
         return train, test
@@ -279,6 +265,7 @@ class BaseDataModule(LightningDataModule):
         train = self.dataset(root=self.data_root, train=True, download=True)
         test = self.dataset(root=self.data_root, train=False, download=True)
 
+        self.processed_root = train.processed_root
         self.train_data_len = len(train)
         self.test_data_len = len(test)
         self.num_step = int(math.ceil(len(train) / self.batch_size))
