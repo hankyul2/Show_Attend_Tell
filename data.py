@@ -168,7 +168,7 @@ def download_ms_coco_2014(data_root):
 
 
 class MSCOCO2014(Dataset):
-    def __init__(self, root, train=True, download=False, transform=None, process=False, captions_per_image=3, min_word_freq=2):
+    def __init__(self, root, split='TRAIN', download=False, transform=None, process=False, captions_per_image=3, min_word_freq=2):
         self.processed_root = os.path.join(root, f'{captions_per_image}_cap_per_img_{min_word_freq}_min_word_freq')
 
         if download == True:
@@ -176,8 +176,8 @@ class MSCOCO2014(Dataset):
         if process == True:
             create_input_files(root, self.processed_root)
 
-        self.train = train
-        self.split = 'TRAIN' if train else 'VAL'
+        self.split = split.upper()
+        self.train = self.split == 'TRAIN'
 
         self.h = h5py.File(os.path.join(self.processed_root, self.split + '_IMAGES.hdf5'), 'r')
         self.imgs = self.h['images']
@@ -247,6 +247,7 @@ class BaseDataModule(LightningDataModule):
         self.num_classes = None
         self.num_step = None
         self.train_data_len = None
+        self.valid_data_len = None
         self.test_data_len = None
         self.prepare_data()
 
@@ -262,18 +263,20 @@ class BaseDataModule(LightningDataModule):
         return train, test
 
     def prepare_data(self) -> None:
-        train = self.dataset(root=self.data_root, train=True, download=True)
-        test = self.dataset(root=self.data_root, train=False, download=True)
+        train = self.dataset(root=self.data_root, split='train', download=True)
+        valid = self.dataset(root=self.data_root, split='val', download=True)
+        test = self.dataset(root=self.data_root, split='test', download=True)
 
         self.processed_root = train.processed_root
         self.train_data_len = len(train)
+        self.valid_data_len = len(valid)
         self.test_data_len = len(test)
         self.num_step = int(math.ceil(len(train) / self.batch_size))
 
     def setup(self, stage: str = None):
-        self.train_ds = self.dataset(root=self.data_root, train=True, transform=self.train_transform)
-        self.valid_ds = self.dataset(root=self.data_root, train=False, transform=self.test_transform)
-        self.test_ds = self.dataset(root=self.data_root, train=False, transform=self.test_transform)
+        self.train_ds = self.dataset(root=self.data_root, split='train', transform=self.train_transform)
+        self.valid_ds = self.dataset(root=self.data_root, split='val', transform=self.test_transform)
+        self.test_ds = self.dataset(root=self.data_root, split='test', transform=self.test_transform)
 
     def train_dataloader(self) -> TRAIN_DATALOADERS:
         # Todo: Setting persistent worker makes server very slow!

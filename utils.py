@@ -55,6 +55,7 @@ class RichDataSummary(Callback):
             table.add_column("Batch Size", justify="right")
             table.add_column("Step", justify="right")
             table.add_column("Train", justify="right")
+            table.add_column("Valid", justify="right")
             table.add_column("Test", justify="right")
             table.add_row(
                 data.dataset_name,
@@ -62,6 +63,7 @@ class RichDataSummary(Callback):
                 str(data.batch_size),
                 str(data.num_step),
                 str(data.train_data_len),
+                str(data.valid_data_len),
                 str(data.test_data_len)
             )
             console.print(table)
