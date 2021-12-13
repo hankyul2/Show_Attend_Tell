@@ -168,12 +168,11 @@ def download_ms_coco_2014(data_root):
 
 
 class MSCOCO2014(Dataset):
-    def __init__(self, root, split='TRAIN', download=False, transform=None, process=False, captions_per_image=3, min_word_freq=2):
+    def __init__(self, root, split='TRAIN', download=False, captions_per_image=3, min_word_freq=2, transform=None):
         self.processed_root = os.path.join(root, f'{captions_per_image}_cap_per_img_{min_word_freq}_min_word_freq')
 
         if download == True:
             download_ms_coco_2014(root)
-        if process == True:
             create_input_files(root, self.processed_root)
 
         self.split = split.upper()
@@ -219,7 +218,8 @@ class BaseDataModule(LightningDataModule):
                  batch_size: int = 64,
                  num_workers: int = 4,
                  data_root: str = '/home/hankyul/hdd_ext2/coco',
-                 valid_ratio: float = 0.1):
+                 captions_per_image=5,
+                 min_word_freq=5):
         """
         Base Data Module
         :arg
@@ -242,7 +242,8 @@ class BaseDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.data_root = data_root
-        self.valid_ratio = valid_ratio
+        self.captions_per_image = captions_per_image
+        self.min_word_freq = min_word_freq
         self.data_processed_name = None
         self.num_classes = None
         self.num_step = None
@@ -263,9 +264,9 @@ class BaseDataModule(LightningDataModule):
         return train, test
 
     def prepare_data(self) -> None:
-        train = self.dataset(root=self.data_root, split='train', download=True)
-        valid = self.dataset(root=self.data_root, split='val', download=True)
-        test = self.dataset(root=self.data_root, split='test', download=True)
+        train = self.dataset(self.data_root, 'train', True, self.captions_per_image, self.min_word_freq)
+        valid = self.dataset(self.data_root, 'val', True, self.captions_per_image, self.min_word_freq)
+        test = self.dataset(self.data_root, 'test', True, self.captions_per_image, self.min_word_freq)
 
         self.processed_root = train.processed_root
         self.train_data_len = len(train)
@@ -274,9 +275,9 @@ class BaseDataModule(LightningDataModule):
         self.num_step = int(math.ceil(len(train) / self.batch_size))
 
     def setup(self, stage: str = None):
-        self.train_ds = self.dataset(root=self.data_root, split='train', transform=self.train_transform)
-        self.valid_ds = self.dataset(root=self.data_root, split='val', transform=self.test_transform)
-        self.test_ds = self.dataset(root=self.data_root, split='test', transform=self.test_transform)
+        self.train_ds = self.dataset(self.data_root, 'train', False, self.captions_per_image, self.min_word_freq, self.train_transform)
+        self.valid_ds = self.dataset(self.data_root, 'val', False, self.captions_per_image, self.min_word_freq, self.test_transform)
+        self.test_ds = self.dataset(self.data_root, 'test', False, self.captions_per_image, self.min_word_freq, self.test_transform)
 
     def train_dataloader(self) -> TRAIN_DATALOADERS:
         # Todo: Setting persistent worker makes server very slow!

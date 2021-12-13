@@ -6,6 +6,8 @@ data:
   - 256
   - 256
   data_root: /home/hankyul/hdd_ext2/coco
+  captions_per_image: 5
+  min_word_freq: 5
   valid_ratio: 0.1
 
 # 2. define model (define other backbone)
