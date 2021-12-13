@@ -35,7 +35,7 @@ trainer:
   amp_backend: native
 
   # 4-2. train setting
-  max_epochs: 12
+  max_epochs: 20
 
   # 4-3. logger & callbacks
   log_every_n_steps: 50

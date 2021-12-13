@@ -76,8 +76,10 @@ class Decoder(nn.Module):
 
 class EncoderDecoder(nn.Module):
     def __init__(self, model_name, pretrained=False, vocab_size=100, dropout=0.1,
-                 output_size=(14, 14), embed_dim=512, decoder_dim=512, attn_dim=512):
+                 output_size=(14, 14), embed_dim=512, decoder_dim=512, attn_dim=512, beam=5):
         super(EncoderDecoder, self).__init__()
+        self.beam = beam
+        self.vocab_size = vocab_size
         self.encoder = Encoder(model_name, pretrained, output_size)
         self.decoder = Decoder(256, embed_dim, decoder_dim, attn_dim, vocab_size, dropout)
 
@@ -87,6 +89,53 @@ class EncoderDecoder(nn.Module):
 
     def forward(self, img, text, text_len):
         return self.forward_impl(img, text, text_len)
+
+    def inference(self, img, word2idx, idx2word):
+        """Apply beam search (batch_size = 1)"""
+        beam, device = self.beam, img.device
+        img = rearrange(self.encoder(img.unsqueeze(0)), '1 h w c -> 1 (h w) c').repeat(beam, 1, 1)
+
+        previous_words = torch.LongTensor([[word2idx['<start>']]] * beam).to(device)
+        sentences, sentence_scores = previous_words, torch.zeros(beam, 1).to(device)
+        complete_sentences, complete_sentence_scores = list(), list()
+
+        step = 1
+
+        h, c = self.decoder.init_h_c(img)
+
+        while beam > 0 and step <= 50:
+            text = self.decoder.embed(previous_words).squeeze(1)
+            attn_weighted_img, attn = self.decoder.attn(img, h)
+            attn_weighted_img *= self.decoder.gate(h)
+            h, c = self.decoder.decoder(torch.cat([attn_weighted_img, text], dim=1), (h, c))
+            scores = sentence_scores + F.log_softmax(self.decoder.head(h), dim=1)
+
+            top_k_scores, top_k_words = scores.view(-1).topk(beam, 0)
+            prev_sentence_idx = top_k_words // self.vocab_size
+            next_word_idx = top_k_words % self.vocab_size
+            sentences = torch.cat([sentences[prev_sentence_idx], next_word_idx.unsqueeze(1)], dim=1)
+
+            incomplete_idx = [idx for idx, next_word in enumerate(next_word_idx) if next_word != word2idx['<end>']]
+            complete_idx = list(set(range(len(next_word_idx))) - set(incomplete_idx))
+            org_sentence_idx = prev_sentence_idx[incomplete_idx]
+
+            if len(complete_idx) > 0:
+                complete_sentences.extend(sentences[complete_idx].tolist())
+                complete_sentence_scores.extend(top_k_scores[complete_idx])
+                beam -= len(complete_idx)
+
+            sentences, sentence_scores = sentences[incomplete_idx], sentence_scores[incomplete_idx]
+            h, c, img = h[org_sentence_idx], c[org_sentence_idx], img[org_sentence_idx]
+            previous_words = next_word_idx[incomplete_idx]
+
+            step += 1
+
+        max_idx = complete_sentence_scores.index(max(complete_sentence_scores))
+
+        sentence = " ".join([idx2word[w] for w in complete_sentences[max_idx]
+                if w not in {word2idx['<start>'], word2idx['<end>'], word2idx['<pad>']}])
+
+        return sentence
 
 
 def get_model(*args, **kwargs):

@@ -11,3 +11,6 @@ windows:
         - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 8 --seed_everything 2021
         - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 10 --seed_everything 2021
         - python3 main.py fit --config base_config.yaml --trainer.gpus 7,8, --trainer.max_epochs 20 --seed_everything 2021
+        # Test
+        - python3 main.py test --config base_config.yaml --trainer.gpus 0, --trainer.strategy null --ckpt_path lightning_logs/version_23/checkpoints/epoch=1-step=2655.ckpt
+        - python3 main.py test --config base_config.yaml --trainer.gpus 0, --trainer.strategy null --ckpt_path lightning_logs/version_28/checkpoints/epoch=19-step=26559.ckpt
