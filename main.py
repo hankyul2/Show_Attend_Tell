@@ -82,7 +82,7 @@ class BaseImageCaptionSystem(LightningModule):
         imgs, _, _, references = batch
         references = self.get_reference_list(references, list(range(len(references))))
         hypothesis = [self.model.inference(img, self.word_map, self.idx_map) for img in imgs]
-        self.log_dict({f'test/beam_BLEU': self.beam_bleu_metric(references, hypothesis)}, prog_bar=True)
+        self.log_dict({f'test/BLEU@4': self.beam_bleu_metric(references, hypothesis)}, prog_bar=True)
         self.show_example(imgs[0], references[0][0], hypothesis[0], batch_idx)
         return self.shared_step(batch[:-1], self.valid_metric, 'test', batch[-1], self.bleu_metric)
 
@@ -97,7 +97,7 @@ class BaseImageCaptionSystem(LightningModule):
         plt.imshow(img)
         plt.xticks([])
         plt.yticks([])
-        plt.text(0, 0, f'{hypothesis}\n{reference}', fontsize=32)
+        plt.xlabel(f'{hypothesis}\n{reference}', fontsize=18)
         plt.savefig(f'{self.save_folder}/{batch_idx}.png')
 
     def shared_step(self, batch, metric, mode, references=None, bleu_metric=None):
@@ -112,7 +112,7 @@ class BaseImageCaptionSystem(LightningModule):
         if bleu_metric:
             references = self.get_reference_list(references, sort_ind)
             hypothesis = [' '.join(self.idx_map[i] for i in pred[:decode_lengths[j]]) for j, pred in enumerate(torch.max(preds, dim=2)[1].tolist())]
-            self.log_dict({f'{mode}/BLEU': bleu_metric(references, hypothesis)}, prog_bar=True)
+            self.log_dict({f'{mode}/teaching_force_BLEU@4': bleu_metric(references, hypothesis)}, prog_bar=True)
 
         return loss
 

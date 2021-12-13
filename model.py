@@ -124,9 +124,9 @@ class EncoderDecoder(nn.Module):
                 complete_sentence_scores.extend(top_k_scores[complete_idx])
                 beam -= len(complete_idx)
 
-            sentences, sentence_scores = sentences[incomplete_idx], sentence_scores[incomplete_idx]
+            sentences, sentence_scores = sentences[incomplete_idx], top_k_scores[incomplete_idx].unsqueeze(1)
             h, c, img = h[org_sentence_idx], c[org_sentence_idx], img[org_sentence_idx]
-            previous_words = next_word_idx[incomplete_idx]
+            previous_words = next_word_idx[incomplete_idx].unsqueeze(1)
 
             step += 1
 
