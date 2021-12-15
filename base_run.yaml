@@ -5,12 +5,7 @@ windows:
       - source ~/.bashrc
     panes:
       - shell_command:
-        - python3 main.py fit --config base_config.yaml --trainer.gpus 0,3, --trainer.max_epochs 2
-        - python3 main.py fit --config base_config.yaml --trainer.gpus 0,3, --trainer.max_epochs 4
-        - python3 main.py fit --config base_config.yaml --trainer.gpus 0,3, --trainer.max_epochs 6
-        - python3 main.py fit --config base_config.yaml --trainer.gpus 0,3, --trainer.max_epochs 8
-        - python3 main.py fit --config base_config.yaml --trainer.gpus 0,3, --trainer.max_epochs 10
-        - python3 main.py fit --config base_config.yaml --trainer.gpus 0,3, --trainer.max_epochs 20
+        - python3 main.py fit --config base_config.yaml --trainer.gpus 0,1, --trainer.max_epochs 20
+        - python3 main.py fit --config base_config2.yaml --trainer.gpus 2, --trainer.max_epochs 20
         # Test
-#        - python3 main.py test --config base_config.yaml --trainer.gpus 0, --trainer.strategy null --ckpt_path lightning_logs/version_23/checkpoints/epoch=1-step=2655.ckpt
-#        - python3 main.py test --config base_config.yaml --trainer.gpus 0, --trainer.strategy null --ckpt_path lightning_logs/version_28/checkpoints/epoch=19-step=26559.ckpt
+#        - python3 main.py test --config base_config.yaml --trainer.gpus 0, --trainer.strategy null --ckpt_path lightning_logs/version_84/checkpoints/epoch=17-step=39833.ckpt

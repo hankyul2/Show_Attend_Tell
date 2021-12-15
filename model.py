@@ -130,6 +130,9 @@ class EncoderDecoder(nn.Module):
 
             step += 1
 
+        if len(complete_sentence_scores) == 0:
+            return ""
+
         max_idx = complete_sentence_scores.index(max(complete_sentence_scores))
 
         sentence = " ".join([idx2word[w] for w in complete_sentences[max_idx]
@@ -140,4 +143,3 @@ class EncoderDecoder(nn.Module):
 
 def get_model(*args, **kwargs):
     return EncoderDecoder(*args, **kwargs)
-

@@ -173,7 +173,7 @@ class MSCOCO2014(Dataset):
 
         if download == True:
             download_ms_coco_2014(root)
-            create_input_files(root, self.processed_root)
+            create_input_files(root, self.processed_root, captions_per_image, min_word_freq)
 
         self.split = split.upper()
         self.train = self.split == 'TRAIN'

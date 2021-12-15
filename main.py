@@ -66,6 +66,7 @@ class BaseImageCaptionSystem(LightningModule):
         self.bleu_metric = BLEUScore()
         self.beam_bleu_metric = BLEUScore()
         self.save_folder = save_folder
+        self.results = {'references': [], 'hypothesis': []}
 
     def forward(self, batch, batch_idx):
         x, y = batch
@@ -84,7 +85,13 @@ class BaseImageCaptionSystem(LightningModule):
         hypothesis = [self.model.inference(img, self.word_map, self.idx_map) for img in imgs]
         self.log_dict({f'test/BLEU@4': self.beam_bleu_metric(references, hypothesis)}, prog_bar=True)
         self.show_example(imgs[0], references[0][0], hypothesis[0], batch_idx)
-        return self.shared_step(batch[:-1], self.valid_metric, 'test', batch[-1], self.bleu_metric)
+        self.results['hypothesis'].extend(hypothesis)
+        self.results['references'].extend(references)
+
+    def on_test_end(self) -> None:
+        import json
+        with open(f'{self.save_folder}/inference_results.json', 'w') as f:
+            json.dump(self.results, f, ensure_ascii=False, indent=4)
 
     def show_example(self, img, reference, hypothesis, batch_idx):
         import numpy as np
