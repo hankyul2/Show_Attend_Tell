@@ -1,5 +1,6 @@
 data:
   dataset_name: "coco"
+  use_feat: false
   batch_size: 128
   num_workers: 4
   size:
@@ -12,7 +13,7 @@ data:
 # 2. define model (define other backbone)
 model:
   model_name: 'efficientnet_v2_s'
-  pretrained: false
+  pretrained: true
 
 # 3. prepare train tools (optimizer, learning rate scheduler)
 optimizer:

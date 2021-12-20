@@ -45,7 +45,7 @@ class Decoder(nn.Module):
 
     def forward(self, encoder_out, encoded_text, encoded_text_len):
         device = encoder_out.device
-        img = rearrange(encoder_out, 'b h w c -> b (h w) c')
+        img = rearrange(encoder_out, 'b h w c -> b (h w) c') if encoder_out.dim() > 3 else encoder_out
         batch_size, pixel_size, vocab_size = encoder_out.size(0), img.size(1), self.vocab_size
 
         h, c = self.init_h_c(img)
@@ -75,25 +75,26 @@ class Decoder(nn.Module):
 
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, model_name, pretrained=False, vocab_size=100, dropout=0.1,
+    def __init__(self, model_name, pretrained=False, use_feat=False, vocab_size=100, dropout=0.1,
                  output_size=(14, 14), embed_dim=512, decoder_dim=512, attn_dim=512, beam=5):
         super(EncoderDecoder, self).__init__()
         self.beam = beam
+        self.use_feat = use_feat
         self.vocab_size = vocab_size
-        self.encoder = Encoder(model_name, pretrained, output_size)
-        self.decoder = Decoder(256, embed_dim, decoder_dim, attn_dim, vocab_size, dropout)
+        self.encoder = nn.Identity() if use_feat else Encoder(model_name, pretrained, output_size)
+        self.decoder = Decoder(2048 if use_feat else 256, embed_dim, decoder_dim, attn_dim, vocab_size, dropout)
 
     def forward_impl(self, img, text, text_len):
-        img = self.encoder(img)
-        return self.decoder(img, text, text_len)
+        return self.decoder(self.encoder(img), text, text_len)
 
-    def forward(self, img, text, text_len):
-        return self.forward_impl(img, text, text_len)
+    def forward(self, img, feat, text, text_len):
+        return self.forward_impl(feat if self.use_feat else img, text, text_len)
 
-    def inference(self, img, word2idx, idx2word):
+    def inference(self, img, feat, word2idx, idx2word):
         """Apply beam search (batch_size = 1)"""
         beam, device = self.beam, img.device
-        img = rearrange(self.encoder(img.unsqueeze(0)), '1 h w c -> 1 (h w) c').repeat(beam, 1, 1)
+        img = feat.unsqueeze(0) if self.use_feat else rearrange(self.encoder(img.unsqueeze(0)), '1 h w c -> 1 (h w) c')
+        img = img.repeat(beam, 1, 1)
 
         previous_words = torch.LongTensor([[word2idx['<start>']]] * beam).to(device)
         sentences, sentence_scores = previous_words, torch.zeros(beam, 1).to(device)

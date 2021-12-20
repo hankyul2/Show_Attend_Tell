@@ -23,8 +23,8 @@ from model import get_model
 
 class BaseImageCaptionSystem(LightningModule):
     def __init__(self, model_name: str, pretrained: bool, num_step: int, max_epochs: int,
-                 gpus: str, optimizer_init: dict, lr_scheduler_init: dict,
-                 processed_root: str, dropout: float = 0.0, save_folder='inference_results'):
+                 gpus: str, optimizer_init: dict, lr_scheduler_init: dict, processed_root: str,
+                 use_feat: bool = False, dropout: float = 0.0, save_folder='inference_results'):
         """ Define base vision classification system
         :arg
             model_name: model name string ex) efficientnet_v2_s
@@ -51,7 +51,7 @@ class BaseImageCaptionSystem(LightningModule):
         # step 2. define model
         self.word_map = self.open_word_map(processed_root)
         self.idx_map = {v: k for k, v in self.word_map.items()}
-        self.model = get_model(model_name, pretrained, len(self.word_map), dropout)
+        self.model = get_model(model_name, pretrained, use_feat, len(self.word_map), dropout)
 
         # step 3. define lr tools (optimizer, lr scheduler)
         self.optimizer_init_config = optimizer_init
@@ -80,9 +80,9 @@ class BaseImageCaptionSystem(LightningModule):
         return self.shared_step(batch[:-1], self.valid_metric, 'valid', batch[-1], self.bleu_metric)
 
     def test_step(self, batch, batch_idx, dataloader_idx=None):
-        imgs, _, _, references = batch
+        imgs, feats, _, _, references = batch
         references = self.get_reference_list(references, list(range(len(references))))
-        hypothesis = [self.model.inference(img, self.word_map, self.idx_map) for img in imgs]
+        hypothesis = [self.model.inference(img, feat, self.word_map, self.idx_map) for img, feat in zip(imgs, feats)]
         self.log_dict({f'test/BLEU@4': self.beam_bleu_metric(references, hypothesis)}, prog_bar=True)
         self.show_example(imgs[0], references[0][0], hypothesis[0], batch_idx)
         self.results['hypothesis'].extend(hypothesis)
@@ -164,6 +164,7 @@ class BaseImageCaptionSystem(LightningModule):
 class MyLightningCLI(LightningCLI):
     def add_arguments_to_parser(self, parser):
         # 1. link argument
+        parser.link_arguments('data.use_feat', 'model.use_feat', apply_on='instantiate')
         parser.link_arguments('data.processed_root', 'model.processed_root', apply_on='instantiate')
         parser.link_arguments('data.num_step', 'model.num_step', apply_on='instantiate')
         parser.link_arguments('trainer.max_epochs', 'model.max_epochs', apply_on='parse')

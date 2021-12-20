@@ -1,16 +1,13 @@
-import math
-import os
-import json
-import subprocess
-import zipfile
-from collections import Counter
 from pathlib import Path
+from collections import Counter
 from random import seed, choice, sample
+import csv, glob, base64, math, os, json, zipfile, subprocess, sys
 
 import cv2
 import h5py
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 from rich.progress import track
 
 import torch
@@ -141,6 +138,9 @@ def save_caption_with_img(captions_per_image, imcaps, impaths, max_len, output_f
         with open(os.path.join(output_folder, split + '_CAPLENS.json'), 'w') as j:
             json.dump(caplens, j)
 
+    with open(os.path.join(output_folder, split + '_IDX2PATH.json'), 'w') as j:
+        json.dump([int(path.split('/')[-1].split('.')[0].split('_')[-1]) for path in impaths], j)
+
 
 def download_ms_coco_2014(data_root):
     Path(data_root).mkdir(exist_ok=True, parents=True)
@@ -167,12 +167,57 @@ def download_ms_coco_2014(data_root):
                 zip_ref.extractall(data_root)
 
 
+def download_detected_object_features(data_root):
+    Path(data_root).mkdir(exist_ok=True, parents=True)
+    processed_files = [os.path.join(data_root, folder) for folder in ['object_features', 'object_attr', 'object_box']]
+    is_processed = all(Path(file).exists() for file in processed_files)
+    if is_processed:
+        print('ms_coco_2014 object features is downloaded and processed already')
+        return
+
+    unzip_file = 'trainval'
+    download_file = 'trainval.zip'
+    download_url = 'https://storage.googleapis.com/up-down-attention/trainval.zip'
+
+    if not Path(os.path.join(data_root, unzip_file)).exists():
+        if not Path(os.path.join(data_root, download_file)).exists():
+            subprocess.run(["wget", "-r", "-nc", '-O', download_file, download_url])
+        with zipfile.ZipFile(download_file, 'r') as zip_ref:
+            zip_ref.extractall(data_root)
+
+    field_names = ['image_id', 'image_w', 'image_h', 'num_boxes', 'boxes', 'features']
+    extracted_file = glob.glob(os.path.join(data_root, 'trainval', '*'))
+    feat_dir, attr_dir, box_dir = processed_files
+    csv.field_size_limit(sys.maxsize)
+
+    for folder_name in processed_files:
+        Path(folder_name).mkdir(exist_ok=True, parents=True)
+
+    for file_name in extracted_file:
+        with open(file_name, "r") as tsv_file:
+            reader = csv.DictReader(tsv_file, delimiter='\t', fieldnames=field_names)
+            for item in tqdm(reader):
+                item['image_id'] = int(item['image_id'])
+                item['num_boxes'] = int(item['num_boxes'])
+                for field in ['boxes', 'features']:
+                    item[field] = np.frombuffer(
+                        base64.decodestring(item[field].encode('ascii')), dtype=np.float32
+                    ).reshape((item['num_boxes'], -1))
+                np.savez_compressed(os.path.join(attr_dir, str(item['image_id'])), feat=item['features'])
+                np.save(os.path.join(feat_dir, str(item['image_id'])), item['features'].mean(0))
+                np.save(os.path.join(box_dir, str(item['image_id'])), item['boxes'])
+
+
 class MSCOCO2014(Dataset):
-    def __init__(self, root, split='TRAIN', download=False, captions_per_image=3, min_word_freq=2, transform=None):
+    def __init__(self, root, use_feat=False, split='TRAIN', download=False,
+                 captions_per_image=3, min_word_freq=2, transform=None):
+        self.root = root
+        self.use_feat = use_feat
         self.processed_root = os.path.join(root, f'{captions_per_image}_cap_per_img_{min_word_freq}_min_word_freq')
 
         if download == True:
             download_ms_coco_2014(root)
+            download_detected_object_features(root)
             create_input_files(root, self.processed_root, captions_per_image, min_word_freq)
 
         self.split = split.upper()
@@ -188,6 +233,9 @@ class MSCOCO2014(Dataset):
         with open(os.path.join(self.processed_root, self.split + '_CAPLENS.json'), 'r') as j:
             self.caplens = json.load(j)
 
+        with open(os.path.join(self.processed_root, self.split + '_IDX2PATH.json'), 'r') as j:
+            self.idx2path = json.load(j)
+
         self.transform = transform
         self.dataset_size = len(self.captions)
 
@@ -198,23 +246,31 @@ class MSCOCO2014(Dataset):
         img_idx = i // self.cpi
         img = torch.FloatTensor(self.imgs[img_idx] / 255.)
         caption, caplen = torch.LongTensor(self.captions[i]), torch.LongTensor([self.caplens[i]])
+        feat = np.zeros((100, 2048))
+
+        if self.use_feat:
+            val = np.load(os.path.join(self.root, 'object_attr', f'{self.idx2path[img_idx]}.npz'))['feat']
+            feat[:val.shape[0], :val.shape[1]] = val
+
+        feat = torch.FloatTensor(feat)
 
         if self.transform is not None:
             img = self.transform(img)
 
         if self.train:
-            return img, caption, caplen
+            return img, feat, caption, caplen
         else:
             # For validation of testing, also return all 'captions_per_image' captions to find BLEU-4 score
             base_caption_idx = img_idx * self.cpi
             all_captions = torch.LongTensor(self.captions[base_caption_idx:(base_caption_idx + self.cpi)])
-            return img, caption, caplen, all_captions
+            return img, feat, caption, caplen, all_captions
 
 
 class BaseDataModule(LightningDataModule):
     def __init__(self,
                  dataset_name: str,
                  size: tuple,
+                 use_feat: bool = False,
                  batch_size: int = 64,
                  num_workers: int = 4,
                  data_root: str = '/home/hankyul/hdd_ext2/coco',
@@ -244,6 +300,7 @@ class BaseDataModule(LightningDataModule):
         self.data_root = data_root
         self.captions_per_image = captions_per_image
         self.min_word_freq = min_word_freq
+        self.use_feat = use_feat
         self.data_processed_name = None
         self.num_classes = None
         self.num_step = None
@@ -264,9 +321,9 @@ class BaseDataModule(LightningDataModule):
         return train, test
 
     def prepare_data(self) -> None:
-        train = self.dataset(self.data_root, 'train', True, self.captions_per_image, self.min_word_freq)
-        valid = self.dataset(self.data_root, 'val', True, self.captions_per_image, self.min_word_freq)
-        test = self.dataset(self.data_root, 'test', True, self.captions_per_image, self.min_word_freq)
+        train = self.dataset(self.data_root, self.use_feat, 'train', True, self.captions_per_image, self.min_word_freq)
+        valid = self.dataset(self.data_root, self.use_feat, 'val', True, self.captions_per_image, self.min_word_freq)
+        test = self.dataset(self.data_root, self.use_feat, 'test', True, self.captions_per_image, self.min_word_freq)
 
         self.processed_root = train.processed_root
         self.train_data_len = len(train)
@@ -275,9 +332,9 @@ class BaseDataModule(LightningDataModule):
         self.num_step = int(math.ceil(len(train) / self.batch_size))
 
     def setup(self, stage: str = None):
-        self.train_ds = self.dataset(self.data_root, 'train', False, self.captions_per_image, self.min_word_freq, self.train_transform)
-        self.valid_ds = self.dataset(self.data_root, 'val', False, self.captions_per_image, self.min_word_freq, self.test_transform)
-        self.test_ds = self.dataset(self.data_root, 'test', False, self.captions_per_image, self.min_word_freq, self.test_transform)
+        self.train_ds = self.dataset(self.data_root, self.use_feat, 'train', False, self.captions_per_image, self.min_word_freq, self.train_transform)
+        self.valid_ds = self.dataset(self.data_root, self.use_feat, 'val', False, self.captions_per_image, self.min_word_freq, self.test_transform)
+        self.test_ds = self.dataset(self.data_root, self.use_feat, 'test', False, self.captions_per_image, self.min_word_freq, self.test_transform)
 
     def train_dataloader(self) -> TRAIN_DATALOADERS:
         # Todo: Setting persistent worker makes server very slow!
